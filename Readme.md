@@ -28,4 +28,4 @@ The application uses a yaml file to determine which accounts are to be processed
 
 ```
 
-There has to be at least one block like the one above, but there can be as many as you want to extract as long as they are separated by an empty line. The months have to be zero padded on the left with 2 digits (ie. January is '01', but December is only '12'). The year also has to be in 4 digits.
+There has to be at least one block like the one above, but there can be as many as you want to extract as long as they are separated by an empty line. The months have to be zero padded on the left with 2 digits (ie. January is '01', but December is only '12'). The year also has to be in 4 digits. The `#`s have to be replaced by the actual account number for the program to work as well.
