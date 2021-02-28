@@ -1,29 +1,29 @@
 import os
 import pdb
 import sys
+import pathlib
 from datetime import datetime
 from inspect import getsourcefile
 
 import yaml
+from PyPDF2 import PdfFileMerger
 from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
 try:
-    from yaml import CDumper as Dumper
     from yaml import CLoader as Loader
 except ImportError:
-    from yaml import Dumper, Loader
+    from yaml import Loader
 
 def num_months(m1: datetime, m2: datetime):
     return (m1.year - m2.year) * 12 + m1.month - m2.month
 
 def process_accounts(accounts):
     for account in accounts:
-        account['months'] = range(*(num_months(datetime.now(), datetime.strptime(x, "%m/%Y")) for x in account['duration']), -1)
-        account['files'] = {}
+        account['months'] = list(range(*(num_months(datetime.now(), datetime.strptime(x, "%m/%Y")) for x in account['duration']), -1))
 
 def resolve_env():
     """ Adds the web drivers necessary for Selenium to work at runtime """
@@ -137,32 +137,64 @@ def extract(driver, accounts):
     print("Extracting")
 
     for account in accounts:
-        print(account)
         # Wait to ensure that the correct DOM elements are loaded
         WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "documentType-button")))
+        WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "accountNumber")))
 
         # Select the correct account
         driver.execute_script('document.getElementById("accountNumber").style = "display: block;"')
         sel = Select(driver.find_element_by_xpath("//select[@id='accountNumber'] | //select[@name='accountNumber']"))
         sel.select_by_value(account['account'].replace('.', ''))
 
-        # Select the correct month
-        for month in account['months']:
-            driver.execute_script('document.getElementById("searchIntervalIndex").style = "display: block;"')
-            sel = Select(driver.find_element_by_xpath("//select[@id='searchIntervalIndex'] | //select[@name='searchIntervalIndex']"))
-            sel.select_by_value(f"{month}")
+        # Iterate over the given months
+        # Indexes are needed in case the process has to repeat for a single index
+        while account['months']:
+            for month in account['months']:
+                try:
+                    print(f"Attempting download for month: {month}")
+                    WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.ID, "searchIntervalIndex")))
+                    driver.execute_script('document.getElementById("searchIntervalIndex").style = "display: block;"')
+                    sel = Select(driver.find_element_by_xpath("//select[@id='searchIntervalIndex'] | //select[@name='searchIntervalIndex']"))
+                    sel.select_by_value(f"{month}")
 
-            driver.find_element_by_xpath("//input[@id='archiveSearchSubmit']").click()
+                    WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//input[@id='archiveSearchSubmit']")))
+                    driver.find_element_by_xpath("//input[@id='archiveSearchSubmit']").click()
 
-            # Wait to ensure that the correct DOM elements are loaded
-            WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.XPATH, "//table//a[@href='ajax/attachment/0/kontoutskrift'] | //div[@id='userInformationView']")))
-            
-            # Check if query resulted in a file:
-            if driver.find_element_by_xpath("//table//a[@href='ajax/attachment/0/kontoutskrift']").is_displayed():
-                # Click the file to download
-                driver.find_element_by_xpath("//table//a[@href='ajax/attachment/0/kontoutskrift']").click()
-            else:
-                print(f"Could not find financial statement for {driver.find_element_by_id('searchIntervalIndex-button').text} for {account['account']}")
+                    # Wait to ensure that the correct DOM elements are loaded
+                    WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//table//a[@href='ajax/attachment/0/kontoutskrift'] | //div[@id='userInformationView']")))
+                    
+                    try:
+                        # Click the file to download
+                        driver.find_element_by_xpath("//table//a[@href='ajax/attachment/0/kontoutskrift']").click()
+                        account['months'].remove(month)
+                    except NoSuchElementException:
+                        # Inform the user if it's not possible to download
+                        pdb.set_trace()
+                        print(f"Could not find financial statement for {account['account']} in {driver.find_element_by_id('searchIntervalIndex-button').text}")
+                except TimeoutException:
+                    print(f"Timed out for {account['account']} on {driver.find_element_by_id('searchIntervalIndex-button').text}")
+                    pass
+
+        combine(account)
+
+def combine(account):
+    """ Combines the downloaded pdfs into one and deletes the individual ones """
+
+    print(f"Combining for {account['account']}")
+
+    dl_path = pathlib.Path(os.getcwd())
+    files = [x for x in dl_path.glob('*.pdf') if x.stem.startswith(account['account'].replace('.', ''))]
+
+    merger = PdfFileMerger()
+
+    for file in sorted(files):
+        merger.append(str(file))
+
+    merger.write(f"{account['account']}.pdf")
+    merger.close()
+
+    for file in files:
+        file.unlink(missing_ok=True)
 
 def main(argv):
     # TODO: Change from using argv directly to argparse
