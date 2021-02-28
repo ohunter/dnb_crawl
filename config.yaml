@@ -1,0 +1,6 @@
+ssn: "###########"    # The user identification number
+extraction:           # Contains all the different accounts to be extracted
+  - from: "01/2020"   # The first month
+    to: "01/2021"     # The month after the last one needed
+    accounts:         # All the accounts which should be handled within this duration
+    - "####.##.#####"
