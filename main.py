@@ -1,7 +1,9 @@
 import os
-import pdb
-import sys
 import pathlib
+import pdb
+import re
+import sys
+import time
 from datetime import datetime
 from inspect import getsourcefile
 
@@ -45,7 +47,7 @@ def configure():
     conf = {}
 
     opt = webdriver.firefox.options.Options()
-    # opt.headless = True
+    opt.headless = True
     prof = webdriver.FirefoxProfile()
 
     prof.set_preference('browser.download.folderList', 2)
@@ -133,8 +135,9 @@ def navigate(driver):
 
 def extract(driver, accounts):
     """ Extract all the statements for the accounts given """
-
     print("Extracting")
+
+    file_pattern = re.compile('(\\d{11})_-_(\\d{4}-\\d{2}).*')
 
     for account in accounts:
         # Wait to ensure that the correct DOM elements are loaded
@@ -147,11 +150,10 @@ def extract(driver, accounts):
         sel.select_by_value(account['account'].replace('.', ''))
 
         # Iterate over the given months
-        # Indexes are needed in case the process has to repeat for a single index
+        # Goes until all the months have been extracted, even with timeouts
         while account['months']:
             for month in account['months']:
                 try:
-                    print(f"Attempting download for month: {month}")
                     WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.ID, "searchIntervalIndex")))
                     driver.execute_script('document.getElementById("searchIntervalIndex").style = "display: block;"')
                     sel = Select(driver.find_element_by_xpath("//select[@id='searchIntervalIndex'] | //select[@name='searchIntervalIndex']"))
@@ -166,14 +168,25 @@ def extract(driver, accounts):
                     try:
                         # Click the file to download
                         driver.find_element_by_xpath("//table//a[@href='ajax/attachment/0/kontoutskrift']").click()
-                        account['months'].remove(month)
                     except NoSuchElementException:
                         # Inform the user if it's not possible to download
-                        pdb.set_trace()
                         print(f"Could not find financial statement for {account['account']} in {driver.find_element_by_id('searchIntervalIndex-button').text}")
+                        account['months'].remove(month)
                 except TimeoutException:
                     print(f"Timed out for {account['account']} on {driver.find_element_by_id('searchIntervalIndex-button').text}")
                     pass
+
+            time.sleep(0.5)
+
+            for file in pathlib.Path(os.getcwd()).glob('*.pdf'):
+                match = file_pattern.search(file.stem)
+
+                if not match:
+                    continue
+
+                # remove reference of the file if the file has been downloaded
+                if match.group(1) == account['account'].replace('.', '') and (month := num_months(datetime.now(), datetime.strptime(match.group(2), "%Y-%m"))) in account['months']:
+                    account['months'].remove(month)
 
         combine(account)
 
@@ -193,8 +206,18 @@ def combine(account):
     merger.write(f"{account['account']}.pdf")
     merger.close()
 
-    for file in files:
-        file.unlink(missing_ok=True)
+def cleanup():
+    """ A function who's whole point is to clean up files which may be missed in the combination step """
+
+    print("Cleaning up remaining files")
+
+    file_pattern = re.compile('(\\d{11})_-_(\\d{4}-\\d{2}).*')
+
+    for file in pathlib.Path(os.getcwd()).glob('*.pdf'):
+        match = file_pattern.search(file.stem)
+
+        if match:
+            file.unlink()
 
 def main(argv):
     # TODO: Change from using argv directly to argparse
@@ -212,6 +235,7 @@ def main(argv):
     login(driver)
     navigate(driver)
     extract(driver, accounts)
+    cleanup()
 
     driver.quit()
 
