@@ -9,6 +9,7 @@ I would recommend using a python distribution system such as [Conda](https://doc
 - Python 3.9
 - Selenium
 - pyyaml
+- pypdf2
 
 ### Driver versions included
 
