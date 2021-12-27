@@ -1,9 +1,9 @@
 import os
 import pathlib
-import pdb
 import re
 import sys
-import time
+import pdb
+from getpass import getpass
 from datetime import datetime
 from inspect import getsourcefile
 
@@ -47,7 +47,7 @@ def configure():
     conf = {}
 
     opt = webdriver.firefox.options.Options()
-    opt.headless = True
+    # opt.headless = True
     prof = webdriver.FirefoxProfile()
 
     prof.set_preference('browser.download.folderList', 2)
@@ -77,12 +77,16 @@ def login(driver, ssn: str = ""):
     if driver.find_element_by_id('consent-modal').is_displayed():
         driver.find_element_by_id('consent-x').click()
 
+    start_login_btn = driver.find_element_by_xpath("//div[@class='css-1bd8b65 e1q5a4kt5']/div[@class='css-19h4t7p e13tkcxz2']/div[@class='e1q5a4kt4 css-qyyy62 e13tkcxz1']/div[@class='css-15qv6ze e1q5a4kt2']/div/div[@class='css-1jhlph6 e1q5a4kt1']/button")
+
+    start_login_btn.click()
+
     # DNB has two stages of login
     # The first one is simply entering a user's SSN
     # Then the user has to select the login type
-    form_1 = driver.find_element_by_xpath("//form[@id='loginForm']")
+    form_1 = driver.find_element_by_xpath("//form")
     inp = form_1.find_element_by_xpath(".//input[@name='uid']")
-    cnf = form_1.find_element_by_xpath(".//input[@id='loginFormSubmit'] | .//input[@name='Login']")
+    cnf = form_1.find_element_by_xpath(".//button[last()]")
 
     if not ssn:
         ssn = input("Please enter your SSN for DNB: ")
@@ -106,11 +110,15 @@ def login(driver, ssn: str = ""):
     # Clear the fields and ask for user input
     pin.clear()
     otp.clear()
-    pin.send_keys(input("Please enter your PIN: "))
-    otp.send_keys(input("Please enter your one time password: "))
+    pin.send_keys(getpass("Please enter your PIN: "))
+    otp.send_keys(getpass("Please enter your one time password: "))
 
     # Login
     btn.click()
+
+    # Force a navigation to the user's homepage
+    logo_link = driver.find_element_by_xpath("//div[@id='logo']/a")
+    logo_link.click()
 
     # Wait for AJAX request to finish so that the required elements are present
     WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "gllwg04e")))
