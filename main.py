@@ -47,7 +47,7 @@ def configure():
     conf = {}
 
     opt = webdriver.firefox.options.Options()
-    # opt.headless = True
+    opt.headless = True
     prof = webdriver.FirefoxProfile()
 
     prof.set_preference('browser.download.folderList', 2)
