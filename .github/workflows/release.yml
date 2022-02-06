@@ -1,0 +1,21 @@
+# This workflow generates the release for all OSs
+
+on: []
+
+name: Generate Release
+
+jobs:
+  build:
+    runs-on: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v2
+      with:
+        python-version: "3.9"
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Generate executable
+      run: pyinstaller main.py -F -n DNB_Kontoutskrifter -c
