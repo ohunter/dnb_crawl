@@ -77,7 +77,7 @@ def login(driver, ssn: str = ""):
     if driver.find_element_by_id('consent-modal').is_displayed():
         driver.find_element_by_id('consent-x').click()
 
-    start_login_btn = driver.find_element_by_xpath("//div[@class='css-1bd8b65 e1q5a4kt5']/div[@class='css-19h4t7p e13tkcxz2']/div[@class='e1q5a4kt4 css-qyyy62 e13tkcxz1']/div[@class='css-15qv6ze e1q5a4kt2']/div/div[@class='css-1jhlph6 e1q5a4kt1']/button")
+    start_login_btn = driver.find_element_by_xpath("/html/body/div/div[1]/div[1]/section/header/div[2]/div/div/div[3]/div[2]/div/button")
 
     start_login_btn.click()
 
@@ -246,7 +246,7 @@ def main(argv):
 
     # Instantiate the web browser and navigate to DNB
     driver = webdriver.Firefox(**configure())
-    login(driver, config['ssn'])
+    login(driver, config.get('ssn'))
     navigate(driver)
     extract(driver, config)
     cleanup()
