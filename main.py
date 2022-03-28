@@ -3,7 +3,6 @@ import pathlib
 import re
 import sys
 import pdb
-from getpass import getpass
 from datetime import datetime
 from inspect import getsourcefile
 
@@ -14,6 +13,11 @@ from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
+
+try:
+    from pwinput import pwinput as getpass
+except ImportError:
+    from getpass import getpass
 
 try:
     from yaml import CLoader as Loader
@@ -115,6 +119,9 @@ def login(driver, ssn: str = ""):
 
     # Login
     btn.click()
+
+    # Wait for the necessary DOM elements to be loaded
+    WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "logo")))
 
     # Force a navigation to the user's homepage
     logo_link = driver.find_element_by_xpath("//div[@id='logo']/a")
