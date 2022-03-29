@@ -277,7 +277,6 @@ def main(argv):
         with open(log_path, "w") as log_fi:
             log_fi.write(str(e))
             log_fi.write(traceback.format_exc())
-        breakpoint()
         print(f"Exception occurred. Check {log_path} for why the exception occurred.")
 
     driver.quit()
