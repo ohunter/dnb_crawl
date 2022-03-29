@@ -3,6 +3,7 @@ import pathlib
 import re
 import sys
 import pdb
+import traceback
 from datetime import datetime
 from inspect import getsourcefile
 
@@ -93,7 +94,7 @@ def login(driver, ssn: str = ""):
     cnf = form_1.find_element_by_xpath(".//button[last()]")
 
     if not ssn:
-        ssn = input("Please enter your SSN for DNB: ")
+        ssn = input("Please enter your SSN for DNB (11 digits): ")
     inp.clear()
     inp.send_keys(ssn)
     cnf.click()
@@ -114,14 +115,14 @@ def login(driver, ssn: str = ""):
     # Clear the fields and ask for user input
     pin.clear()
     otp.clear()
-    pin.send_keys(getpass("Please enter your PIN: "))
-    otp.send_keys(getpass("Please enter your one time password: "))
+    pin.send_keys(getpass("Please enter your PIN (4 digits): "))
+    otp.send_keys(getpass("Please enter your one time password (6 digits): "))
 
     # Login
     btn.click()
 
     # Wait for the necessary DOM elements to be loaded
-    WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "logo")))
+    WebDriverWait(driver, 60).until(EC.element_to_be_clickable((By.XPATH, "/html/body/div/div[1]/div/a")))
 
     # Force a navigation to the user's homepage
     logo_link = driver.find_element_by_xpath("//div[@id='logo']/a")
@@ -184,6 +185,8 @@ def extract(driver, config):
                         WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//table//a[@href='ajax/attachment/0/kontoutskrift'] | //div[@id='userInformationView']")))
                         
                         try:
+                            # Wait for the necessary DOM elements to be clickable
+                            WebDriverWait(driver, 60).until(EC.element_to_be_clickable((By.XPATH, "//table//a[@href='ajax/attachment/0/kontoutskrift']")))
                             # Click the file to download
                             driver.find_element_by_xpath("//table//a[@href='ajax/attachment/0/kontoutskrift']").click()
                         except NoSuchElementException:
@@ -243,8 +246,16 @@ def main(argv):
         print("Usage: python main.py config.yaml")
         return
 
+    old_cwd = os.getcwd()
+    new_cwd = os.path.dirname(os.path.realpath(__file__))
+
+    # Change directory to the directory of the current file
+    os.chdir(new_cwd)
+
+    config_path = os.path.abspath(os.path.join(old_cwd, sys.argv[1]))
+
     config = {}
-    with open(sys.argv[1], 'r') as fi:
+    with open(config_path, 'r') as fi:
         config |= yaml.load(fi.read(-1), Loader=Loader)
 
     process_config(config)
@@ -253,12 +264,27 @@ def main(argv):
 
     # Instantiate the web browser and navigate to DNB
     driver = webdriver.Firefox(**configure())
-    login(driver, config.get('ssn'))
-    navigate(driver)
-    extract(driver, config)
-    cleanup()
+
+    try:
+        login(driver, config.get('ssn'))
+        navigate(driver)
+        extract(driver, config)
+        cleanup()
+    except BaseException as e:
+        log_timestamp = datetime.now().isoformat().replace("-", "_").replace(":", "_").replace(".", "_").replace("_", "")
+        log_file = f"dnb_crawl_{log_timestamp}.log"
+        log_path = os.path.abspath(os.path.join(new_cwd, log_file))
+        with open(log_path, "w") as log_fi:
+            log_fi.write(str(e))
+            log_fi.write(traceback.format_exc())
+        print(f"Exception occurred. Check {log_path} for why the exception occurred.")
 
     driver.quit()
+
+    try:
+        os.unlink(os.path.abspath(os.path.join(new_cwd, "geckodriver.log")))
+    except BaseException as e:
+        print(e)
 
 if __name__ == '__main__':
     main(sys.argv)
