@@ -253,10 +253,17 @@ def main(argv):
 
     # Instantiate the web browser and navigate to DNB
     driver = webdriver.Firefox(**configure())
-    login(driver, config.get('ssn'))
-    navigate(driver)
-    extract(driver, config)
-    cleanup()
+
+    try:
+        login(driver, config.get('ssn'))
+        navigate(driver)
+        extract(driver, config)
+        cleanup()
+    except BaseException as e:
+        with open(f"dnb_crawl_{datetime.now().isoformat}.log", "w") as log_fi:
+            log_fi.write(str(e))
+            log_fi.write(traceback.format_exc())
+
 
     driver.quit()
 
