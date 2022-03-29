@@ -3,6 +3,7 @@ import pathlib
 import re
 import sys
 import pdb
+import traceback
 from datetime import datetime
 from inspect import getsourcefile
 
@@ -260,12 +261,19 @@ def main(argv):
         extract(driver, config)
         cleanup()
     except BaseException as e:
-        with open(f"dnb_crawl_{datetime.now().isoformat}.log", "w") as log_fi:
+        log_timestamp = datetime.now().isoformat().replace("-", "_").replace(":", "_").replace(".", "_").replace("_", "")
+        log_file = f"dnb_crawl_{log_timestamp}.log"
+        with open(log_file, "w") as log_fi:
             log_fi.write(str(e))
             log_fi.write(traceback.format_exc())
-
+        print(f"Exception occurred. Check {log_file} for why the exception occurred.")
 
     driver.quit()
+
+    try:
+        os.unlink("geckodriver.log")
+    except:
+        pass
 
 if __name__ == '__main__':
     main(sys.argv)
