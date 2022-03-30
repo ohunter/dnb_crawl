@@ -25,6 +25,9 @@ try:
 except ImportError:
     from yaml import Loader
 
+# The timeout in seconds for DOM elements to be found
+Timeout = 5
+
 def num_months(m1: datetime, m2: datetime):
     return (m1.year - m2.year) * 12 + m1.month - m2.month
 
@@ -100,7 +103,7 @@ def login(driver, ssn: str = ""):
     cnf.click()
 
     # Wait for the necessary DOM elements to be loaded
-    WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "r_state-2")))
+    WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.ID, "r_state-2")))
 
     # Select the easier method of logging in and logging in
     nd_login = driver.find_element_by_xpath("//div[@id='r_state-2']")
@@ -121,15 +124,19 @@ def login(driver, ssn: str = ""):
     # Login
     btn.click()
 
-    # Wait for the necessary DOM elements to be loaded
-    WebDriverWait(driver, 60).until(EC.element_to_be_clickable((By.XPATH, "/html/body/div/div[1]/div/a")))
+    try:
+        # Wait for the necessary DOM elements to be loaded
+        WebDriverWait(driver, Timeout).until(EC.element_to_be_clickable((By.XPATH, "/html/body/div/div[1]/div/a")))
 
-    # Force a navigation to the user's homepage
-    logo_link = driver.find_element_by_xpath("//div[@id='logo']/a")
-    logo_link.click()
+        # Force a navigation to the user's homepage
+        logo_link = driver.find_element_by_xpath("//div[@id='logo']/a")
+        logo_link.click()
+    except TimeoutException:
+        # Typically happens when the user isnt prompted with an intermidiate page
+        pass
 
     # Wait for AJAX request to finish so that the required elements are present
-    WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "gllwg04e")))
+    WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.ID, "gllwg04e")))
 
 def navigate(driver):
     """ navigate to the correct part of the DNB website """
@@ -145,7 +152,7 @@ def navigate(driver):
     # Locate the correct link
     m1.find_element_by_xpath(".//a[@id='gllwg07s']").click()
 
-    WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "documentType-button")))
+    WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.ID, "documentType-button")))
 
     driver.execute_script('document.getElementById("documentType").style = "display: block;"')
     sel = Select(driver.find_element_by_xpath("//select[@id='documentType'] | //select[@name='documentType']"))
@@ -160,8 +167,8 @@ def extract(driver, config):
         for account in entry['accounts']:
             months = list(entry['months'])
             # Wait to ensure that the correct DOM elements are loaded
-            WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "documentType-button")))
-            WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "accountNumber")))
+            WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.ID, "documentType-button")))
+            WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.ID, "accountNumber")))
 
             # Select the correct account
             driver.execute_script('document.getElementById("accountNumber").style = "display: block;"')
@@ -173,20 +180,17 @@ def extract(driver, config):
             while months:
                 for month in months:
                     try:
-                        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.ID, "searchIntervalIndex")))
+                        WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.ID, "searchIntervalIndex")))
                         driver.execute_script('document.getElementById("searchIntervalIndex").style = "display: block;"')
                         sel = Select(driver.find_element_by_xpath("//select[@id='searchIntervalIndex'] | //select[@name='searchIntervalIndex']"))
                         sel.select_by_value(f"{month}")
 
-                        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//input[@id='archiveSearchSubmit']")))
+                        WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.XPATH, "//input[@id='archiveSearchSubmit']")))
                         driver.find_element_by_xpath("//input[@id='archiveSearchSubmit']").click()
-
-                        # Wait to ensure that the correct DOM elements are loaded
-                        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//table//a[@href='ajax/attachment/0/kontoutskrift'] | //div[@id='userInformationView']")))
                         
                         try:
-                            # Wait for the necessary DOM elements to be clickable
-                            WebDriverWait(driver, 60).until(EC.element_to_be_clickable((By.XPATH, "//table//a[@href='ajax/attachment/0/kontoutskrift']")))
+                            # Wait to ensure that the correct DOM elements are loaded
+                            WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.XPATH, "//table//a[@href='ajax/attachment/0/kontoutskrift'] | //div[@id='userInformationView']")))
                             # Click the file to download
                             driver.find_element_by_xpath("//table//a[@href='ajax/attachment/0/kontoutskrift']").click()
                         except NoSuchElementException:
@@ -232,7 +236,7 @@ def cleanup():
 
     print("Cleaning up remaining files")
 
-    file_pattern = re.compile('(\\d{11})_-_(\\d{4}-\\d{2}).*')
+    file_pattern = re.compile('(\\d{11})_-_(\\d{4}-\\d{2})(\\(\\d+\\))?.*')
 
     for file in pathlib.Path(os.getcwd()).glob('*.pdf'):
         match = file_pattern.search(file.stem)
