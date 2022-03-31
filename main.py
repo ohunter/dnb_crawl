@@ -81,9 +81,14 @@ def login(driver, ssn: str = ""):
 
     driver.get("https://dnb.no")
 
-    # Remove the modal block that may appear
-    if driver.find_element_by_id('consent-modal').is_displayed():
-        driver.find_element_by_id('consent-x').click()
+    try:
+        WebDriverWait(driver, Timeout).until(EC.element_to_be_clickable((By.ID, 'consent-modal')))
+
+        # Remove the modal block that may appear
+        if driver.find_element_by_id('consent-modal').is_displayed():
+            driver.find_element_by_id('consent-x').click()
+    except TimeoutException:
+        pass
 
     start_login_btn = driver.find_element_by_xpath("/html/body/div/div[1]/div[1]/section/header/div[2]/div/div/div[3]/div[2]/div/button")
 
@@ -218,9 +223,11 @@ def combine(account):
 
     print(f"Combining for {account}")
 
+    file_pattern = re.compile(f"{account.replace('.', '')}_-_\\d{{4}}-\\d{{2}}-\\d{{2}}_-_Kontoutskrift")
+
     # Retrieve all the files pertaining to the account
     dl_path = pathlib.Path(os.getcwd())
-    files = [x for x in dl_path.glob('*.pdf') if x.stem.startswith(account.replace('.', ''))]
+    files = [x for x in dl_path.glob('*.pdf') if file_pattern.fullmatch(x.stem)]
 
     merger = PdfFileMerger()
 
@@ -258,9 +265,16 @@ def main(argv):
 
     config_path = os.path.abspath(os.path.join(old_cwd, sys.argv[1]))
 
-    config = {}
-    with open(config_path, 'r') as fi:
-        config |= yaml.load(fi.read(-1), Loader=Loader)
+    try:
+        config = {}
+        with open(config_path, 'r') as fi:
+            config |= yaml.load(fi.read(-1), Loader=Loader)
+    except:
+        print("Configuration file is probably incorrectly formatted. Please check the file.")
+        if sys.platform.startswith('win'):
+            input("Press enter to exit...")
+        return
+
 
     process_config(config)
 
