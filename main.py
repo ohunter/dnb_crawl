@@ -2,10 +2,13 @@ import os
 import pathlib
 import re
 import sys
-import pdb
 import traceback
-from datetime import datetime
+from datetime import datetime, date
 from inspect import getsourcefile
+from dataclasses import dataclass
+from typing import Optional
+
+from dacite import from_dict, Config as DaConfig
 
 import yaml
 from PyPDF2 import PdfFileMerger
@@ -25,15 +28,36 @@ try:
 except ImportError:
     from yaml import Loader
 
+@dataclass
+class Account:
+    id: str
+    name: Optional[str]
+
+@dataclass
+class Extraction:
+    start: date
+    stop: date
+    accounts: list[Account]
+
+@dataclass
+class Config:
+    ssn: Optional[int]
+    extractions: list[Extraction]
+
 # The timeout in seconds for DOM elements to be found
 Timeout = 5
 
-def num_months(m1: datetime, m2: datetime):
-    return (m1.year - m2.year) * 12 + m1.month - m2.month
+def datestr_to_str(date_str: str) -> date:
+    # Assumes that the format is "MM/YYYY"
+    # The day will always be the first of the month for convenience
+    day = 1
+    month = int(date_str[:2])
+    year = int(date_str[3:])
 
-def process_config(config):
-    for entry in config['extraction']:
-        entry['months'] = range(*(num_months(datetime.now(), datetime.strptime(x, "%m/%Y")) for x in (entry['from'], entry['to'])), -1)
+    return date(year, month, day)
+
+def num_months(m1: date, m2: date):
+    return (m1.year - m2.year) * 12 + m1.month - m2.month
 
 def resolve_env():
     """ Adds the web drivers necessary for Selenium to work at runtime """
@@ -74,7 +98,7 @@ def configure():
 
     return conf
 
-def login(driver, ssn: str = ""):
+def login(driver, ssn: Optional[int]):
     """ Navigates the user to DNB and logs them in using a PIN and OTP combo and waits for the content to load """
 
     print("Logging in")
@@ -92,7 +116,8 @@ def login(driver, ssn: str = ""):
 
     start_login_btn = driver.find_element_by_xpath("/html/body/div/div[1]/div[1]/section/header/div[2]/div/div/div[3]/div[2]/div/button")
 
-    start_login_btn.click()
+    while not driver.find_elements(By.XPATH, '//form'):
+        start_login_btn.click()
 
     # DNB has two stages of login
     # The first one is simply entering a user's SSN
@@ -102,7 +127,7 @@ def login(driver, ssn: str = ""):
     cnf = form_1.find_element_by_xpath(".//button[last()]")
 
     if not ssn:
-        ssn = input("Please enter your SSN for DNB (11 digits): ")
+        ssn = int(input("Please enter your SSN for DNB (11 digits): "))
     inp.clear()
     inp.send_keys(ssn)
     cnf.click()
@@ -163,14 +188,18 @@ def navigate(driver):
     sel = Select(driver.find_element_by_xpath("//select[@id='documentType'] | //select[@name='documentType']"))
     sel.select_by_value('kontoutskrift')
 
-def extract(driver, config):
+def extract(driver, config: Config):
     """ Extract all the statements for the accounts given """
     print("Extracting")
 
     file_pattern = re.compile('(\\d{11})_-_(\\d{4}-\\d{2}).*')
-    for entry in config['extraction']:
-        for account in entry['accounts']:
-            months = list(entry['months'])
+    for extraction in config.extractions:
+        start = num_months(date.today(), extraction.start)
+        stop = num_months(date.today(), extraction.stop)
+        months_ = list(range(start, stop, -1))
+
+        for account in extraction.accounts:
+            months = months_.copy()
             # Wait to ensure that the correct DOM elements are loaded
             WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.ID, "documentType-button")))
             WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.ID, "accountNumber")))
@@ -178,7 +207,7 @@ def extract(driver, config):
             # Select the correct account
             driver.execute_script('document.getElementById("accountNumber").style = "display: block;"')
             sel = Select(driver.find_element_by_xpath("//select[@id='accountNumber'] | //select[@name='accountNumber']"))
-            sel.select_by_value(account.replace('.', ''))
+            sel.select_by_value(account.id.replace('.', ''))
 
             # Iterate over the given months
             # Goes until all the months have been extracted, even with timeouts
@@ -213,17 +242,19 @@ def extract(driver, config):
                         continue
 
                     # remove reference of the file if the file has been downloaded
-                    if match.group(1) == account.replace('.', '') and (month := num_months(datetime.now(), datetime.strptime(match.group(2), "%Y-%m"))) in months:
+                    if match.group(1) == account.id.replace('.', '') and (month := num_months(datetime.now(), datetime.strptime(match.group(2), "%Y-%m"))) in months:
                         months.remove(month)
 
             combine(account)
 
-def combine(account):
+def combine(account: Account):
     """ Combines the downloaded pdfs into one and deletes the individual ones """
+
+    basename = f"{account.name}" if account.name else f"{account.id}"
 
     print(f"Combining for {account}")
 
-    file_pattern = re.compile(f"{account.replace('.', '')}_-_\\d{{4}}-\\d{{2}}-\\d{{2}}_-_Kontoutskrift")
+    file_pattern = re.compile(f"{account.id.replace('.', '')}_-_\\d{{4}}-\\d{{2}}-\\d{{2}}_-_Kontoutskrift")
 
     # Retrieve all the files pertaining to the account
     dl_path = pathlib.Path(os.getcwd())
@@ -235,7 +266,7 @@ def combine(account):
         merger.append(str(file))
 
     # Output the merged PDF
-    merger.write(f"{account}.pdf")
+    merger.write(f"{basename}.pdf")
     merger.close()
 
 def cleanup():
@@ -266,17 +297,19 @@ def main(argv):
     config_path = os.path.abspath(os.path.join(old_cwd, sys.argv[1]))
 
     try:
-        config = {}
         with open(config_path, 'r') as fi:
-            config |= yaml.load(fi.read(-1), Loader=Loader)
-    except:
+            config = from_dict(data_class=Config, data=yaml.load(fi.read(-1), Loader=Loader), config=DaConfig(
+                type_hooks={
+                    date: datestr_to_str
+                }
+            ))
+
+    except Exception as e:
+        print(e)
         print("Configuration file is probably incorrectly formatted. Please check the file.")
         if sys.platform.startswith('win'):
             input("Press enter to exit...")
         return
-
-
-    process_config(config)
 
     resolve_env()
 
@@ -284,7 +317,7 @@ def main(argv):
     driver = webdriver.Firefox(**configure())
 
     try:
-        login(driver, config.get('ssn'))
+        login(driver, config.ssn)
         navigate(driver)
         extract(driver, config)
         cleanup()
@@ -296,6 +329,7 @@ def main(argv):
             log_fi.write(str(e))
             log_fi.write(traceback.format_exc())
         print(f"Exception occurred. Check {log_path} for why the exception occurred.")
+        breakpoint()
 
     driver.quit()
 
