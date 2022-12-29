@@ -19,6 +19,7 @@ use tokio::{
     sync::broadcast::{channel, Receiver, Sender},
 };
 
+mod components;
 mod config;
 mod system;
 
@@ -295,7 +296,7 @@ async fn run_driver(
             debug!("Attempting to navigate to user home");
             let logo = local_driver
                 .query(By::Tag("a"))
-                .with_attribute("title", "DNB")
+                .with_attribute("href", "https://www.dnb.no:443/segp/ps/startsiden")
                 .first()
                 .await
                 .unwrap();
@@ -324,8 +325,8 @@ async fn run_driver(
         task.abort();
     }
 
-    driver.quit().await.unwrap();
-    task_sync_tx.send(Signal {}).unwrap();
+    // driver.quit().await.unwrap();
+    // task_sync_tx.send(Signal {}).unwrap();
     Ok(())
 }
 
@@ -540,7 +541,7 @@ async fn download_statements<'a>(
         .iter()
         .flat_map(|e| e.accounts.iter().zip(repeat((e.from, e.to))))
     {
-        let download_results = download_account_statements(&driver, account, from, to)
+        let download_results = download_account_statements(driver, account, from, to)
             .await
             .unwrap();
         tmp_results.push((&account.id, download_results));
@@ -561,7 +562,8 @@ async fn download_account_statements(
     start: NaiveDate,
     stop: NaiveDate,
 ) -> WebDriverResult<Vec<AccountStatementStatus>> {
-    let month_indices = month_number(start)..month_number(stop);
+    let month_indices = (month_number(stop)..month_number(start) + 1).rev();
+    let mut filenames_to_wait_for: Vec<String> = Vec::new();
     let mut downloads: Vec<AccountStatementStatus> = Vec::with_capacity(month_indices.len());
 
     debug!("Attempting to download statements for {}", account.id);
@@ -624,8 +626,13 @@ async fn download_account_statements(
 
     let retrieve_button = driver.query(By::Id("archiveSearchSubmit")).first().await?;
 
-    let current_month = Month::from_u32(start.month()).unwrap();
-    for (vec_index, month_index) in month_indices.enumerate() {
+    let mut current_month = Month::from_u32(start.month()).unwrap();
+    info!(
+        "Attempting to retrieve {} documents for account {}",
+        month_indices.len(),
+        account.id
+    );
+    for (downloads_index, month_index) in month_indices.enumerate() {
         debug!(
             "Attempting to download {} statements for {}",
             current_month.name(),
@@ -640,7 +647,8 @@ async fn download_account_statements(
         let result_elem = driver
             .query(By::Tag("h3"))
             .with_text("Søket ga ingen treff!")
-            .or(By::LinkText("ajax/attachment/0/kontoutskrift"))
+            .or(By::Tag("a"))
+            .with_attribute("href", "ajax/attachment/0/kontoutskrift")
             .first()
             .await?;
 
@@ -651,6 +659,8 @@ async fn download_account_statements(
                     account.id,
                     current_month.name()
                 );
+
+                downloads.insert(downloads_index, AccountStatementStatus::NotFound);
             }
             "a" => {
                 info!(
@@ -659,13 +669,71 @@ async fn download_account_statements(
                     current_month.name()
                 );
                 result_elem.click().await?;
+
+                debug!("Reading document generation date");
+                let generation_date = NaiveDate::parse_from_str(
+                    &driver
+                        .query(By::XPath("//div[@id='resultView']//table//tbody/tr/td[1]"))
+                        .first()
+                        .await?
+                        .text()
+                        .await?,
+                    "%d.%m.Y",
+                )
+                .unwrap();
+
+                filenames_to_wait_for.push(format!(
+                    "{}_-_{}_-_Kontoutskrift.pdf",
+                    account.id.replace('.', ""),
+                    generation_date.format("%Y-%m-%d")
+                ));
             }
             _ => unreachable!("Invalid tag name from result"),
         }
 
         // Move to the next month
-        current_month.succ();
+        current_month = current_month.succ();
     }
 
+    driver
+        .in_new_tab({
+            || async { wait_for_downloads(driver, filenames_to_wait_for.as_slice()).await }
+        })
+        .await?;
+
     Ok(downloads)
+}
+
+async fn wait_for_downloads(driver: &WebDriver, filenames: &[String]) -> WebDriverResult<()> {
+    driver.goto("about:downloads").await?;
+    let mut filtered_downloads: Vec<components::DownloadListItemComponent> = Vec::new();
+
+    let all_downloads = driver.query(By::Tag("richlistitem")).all().await?;
+    let filter_futures = all_downloads
+        .iter()
+        .map(|elem| (elem, download_belongs_to_file_list(elem, filenames)))
+        .collect::<Vec<_>>();
+
+    for (elem, fut) in filter_futures {
+        if fut.await {
+            filtered_downloads.push(components::DownloadListItemComponent::from(elem));
+        }
+    }
+
+    Ok(())
+}
+
+async fn download_belongs_to_file_list(elem: &WebElement, file_list: &[String]) -> bool {
+    let filename = elem
+        .query(By::Tag("description"))
+        .with_class("downloadTarget")
+        .first()
+        .await
+        .unwrap()
+        .value()
+        .await
+        .unwrap()
+        .unwrap();
+
+    file_list.iter().any(|s| *s == *filename)
 }
