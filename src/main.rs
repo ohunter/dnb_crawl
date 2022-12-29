@@ -1,24 +1,26 @@
-use chrono::{Datelike, Local, NaiveDate};
+use chrono::{Datelike, Local, Month, NaiveDate};
 use clap::Parser;
 use config::{Account, Config};
 use inquire::validator::Validation;
 use inquire::{Password, PasswordDisplayMode, Text};
-use log::{debug, error, trace};
+use log::{debug, error, info, trace, warn};
+use num_traits::FromPrimitive;
 use std::collections::HashMap;
 use std::iter::repeat;
-use std::ops::Range;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::{env, ffi::OsStr, iter::once};
 use thirtyfour::components::SelectElement;
 use thirtyfour::{common::capabilities::firefox::FirefoxPreferences, prelude::*};
 use tokio::{
+    join,
     process::Command,
     signal::{self},
     sync::broadcast::{channel, Receiver, Sender},
 };
 
 mod config;
+mod system;
 
 #[cfg(unix)]
 const GECKODRIVER_EXEC: &str = "geckodriver";
@@ -104,8 +106,12 @@ async fn main() -> WebDriverResult<()> {
 
     // There is no point in awaiting this task as it doesn't hold any resources
     signal_fut.abort();
-    driver_fut.await.unwrap().unwrap();
-    gecko_fut.await.unwrap().unwrap();
+
+    // It is OK to ignore the results of these tasks even though they do return a result
+    #[allow(unused_must_use)]
+    {
+        join!(driver_fut, gecko_fut);
+    }
 
     Ok(())
 }
@@ -187,7 +193,16 @@ async fn run_geckodriver(
 ) -> Result<(), String> {
     debug!("Attempting to start geckodriver");
     let mut fut = Command::new(GECKODRIVER_EXEC)
-        .args(["-p", &port.to_string()])
+        .args([
+            "-p",
+            &port.to_string(),
+            "-b",
+            system::find_firefox()
+                .unwrap()
+                .as_os_str()
+                .to_str()
+                .unwrap(),
+        ])
         .kill_on_drop(true)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -248,9 +263,20 @@ async fn run_driver(
         caps.set_headless().unwrap();
     }
 
-    let driver = WebDriver::new(&format!("http://localhost:{port}"), caps)
-        .await
-        .unwrap();
+    let driver = match WebDriver::new(&format!("http://localhost:{port}"), caps).await {
+        Ok(d) => d,
+        Err(err) => {
+            error!("Unable to start webdriver: {}", err);
+
+            // Inform all the other tasks that to shut down
+            #[allow(unused_must_use)]
+            {
+                task_sync_tx.send(Signal {});
+                proc_sync_tx.send(Signal {});
+            }
+            return Err("Error occured when starting webdriver".to_string());
+        }
+    };
 
     let task = tokio::spawn({
         let local_driver = driver.clone();
@@ -509,45 +535,12 @@ async fn download_statements<'a>(
     config: &'a Config,
 ) -> WebDriverResult<HashMap<&'a String, Vec<AccountStatementStatus>>> {
     let mut tmp_results: Vec<(&String, Vec<AccountStatementStatus>)> = Vec::new();
-    for (account, range) in config.extractions.iter().flat_map(|e| {
-        let start = month_number(e.from);
-        let end = month_number(e.to);
-
-        e.accounts.iter().zip(repeat(start..end))
-    }) {
-        debug!("Attempting to download statements for {}", account.id);
-        debug!("Waiting for account selector to be displayed");
-        driver
-            .query(By::Id("accountNumber-button"))
-            .first()
-            .await?
-            .wait_until()
-            .clickable()
-            .await?;
-
-        debug!("Executing custom javascript to display account selector");
-        driver
-            .execute(
-                r#"document.getElementById("accountNumber").style = "display: block;""#,
-                vec![],
-            )
-            .await?;
-
-        debug!("Waiting for account selector to be accessible");
-        let account_menu = driver
-            .query(By::Tag("select"))
-            .with_id("accountNumber")
-            .first()
-            .await?;
-        account_menu.wait_until().displayed().await?;
-
-        debug!("Attempting to select account {}", account.id);
-        let account_menu = SelectElement::new(&account_menu).await?;
-        account_menu
-            .select_by_value(&account.id.replace('.', ""))
-            .await?;
-
-        let download_results = download_account_statements(&driver, account, range)
+    for (account, (from, to)) in config
+        .extractions
+        .iter()
+        .flat_map(|e| e.accounts.iter().zip(repeat((e.from, e.to))))
+    {
+        let download_results = download_account_statements(&driver, account, from, to)
             .await
             .unwrap();
         tmp_results.push((&account.id, download_results));
@@ -565,9 +558,43 @@ fn month_number(date: NaiveDate) -> u32 {
 async fn download_account_statements(
     driver: &WebDriver,
     account: &Account,
-    month_indices: Range<u32>,
+    start: NaiveDate,
+    stop: NaiveDate,
 ) -> WebDriverResult<Vec<AccountStatementStatus>> {
-    let mut downloads: Vec<AccountStatementStatus> = Vec::new();
+    let month_indices = month_number(start)..month_number(stop);
+    let mut downloads: Vec<AccountStatementStatus> = Vec::with_capacity(month_indices.len());
+
+    debug!("Attempting to download statements for {}", account.id);
+    debug!("Waiting for account selector to be displayed");
+    driver
+        .query(By::Id("accountNumber-button"))
+        .first()
+        .await?
+        .wait_until()
+        .clickable()
+        .await?;
+
+    debug!("Executing custom javascript to display account selector");
+    driver
+        .execute(
+            r#"document.getElementById("accountNumber").style = "display: block;""#,
+            vec![],
+        )
+        .await?;
+
+    debug!("Waiting for account selector to be accessible");
+    let account_menu = driver
+        .query(By::Tag("select"))
+        .with_id("accountNumber")
+        .first()
+        .await?;
+    account_menu.wait_until().displayed().await?;
+
+    debug!("Attempting to select account {}", account.id);
+    let account_menu = SelectElement::new(&account_menu).await?;
+    account_menu
+        .select_by_value(&account.id.replace('.', ""))
+        .await?;
 
     debug!("Waiting for month selector to be displayed");
     driver
@@ -585,6 +612,60 @@ async fn download_account_statements(
             vec![],
         )
         .await?;
+
+    debug!("Waiting for month selector to be accessible");
+    let month_menu = driver
+        .query(By::Tag("select"))
+        .with_id("searchIntervalIndex")
+        .first()
+        .await?;
+    month_menu.wait_until().displayed().await?;
+    let month_menu = SelectElement::new(&month_menu).await?;
+
+    let retrieve_button = driver.query(By::Id("archiveSearchSubmit")).first().await?;
+
+    let current_month = Month::from_u32(start.month()).unwrap();
+    for (vec_index, month_index) in month_indices.enumerate() {
+        debug!(
+            "Attempting to download {} statements for {}",
+            current_month.name(),
+            account.id
+        );
+        month_menu.select_by_value(&month_index.to_string()).await?;
+
+        debug!("Fetching statements for {}", current_month.name());
+        retrieve_button.click().await?;
+
+        debug!("Looking for query result");
+        let result_elem = driver
+            .query(By::Tag("h3"))
+            .with_text("Søket ga ingen treff!")
+            .or(By::LinkText("ajax/attachment/0/kontoutskrift"))
+            .first()
+            .await?;
+
+        match result_elem.tag_name().await?.as_str() {
+            "h3" => {
+                warn!(
+                    "The query looking for {} {} statements failed",
+                    account.id,
+                    current_month.name()
+                );
+            }
+            "a" => {
+                info!(
+                    "The query looking for {} {} statements was successful",
+                    account.id,
+                    current_month.name()
+                );
+                result_elem.click().await?;
+            }
+            _ => unreachable!("Invalid tag name from result"),
+        }
+
+        // Move to the next month
+        current_month.succ();
+    }
 
     Ok(downloads)
 }
