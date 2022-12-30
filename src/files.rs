@@ -1,11 +1,16 @@
 use filepath::FilePath;
+use log::debug;
 use log::error;
+use log::info;
 use lopdf::{Bookmark, Document, Object, ObjectId};
+use std::env;
+use std::fs;
+use std::iter::repeat;
 
 use crate::config::Account;
 use std::{collections::BTreeMap, path::PathBuf};
 
-pub fn merge_documents(account: &Account, filenames: &[String]) -> Result<PathBuf, String> {
+pub fn merge(account: &Account, filenames: &[String]) -> Result<PathBuf, String> {
     let documents = filenames
         .iter()
         .map(|s| Document::load(s).unwrap())
@@ -185,6 +190,32 @@ pub fn merge_documents(account: &Account, filenames: &[String]) -> Result<PathBu
             account.name.as_ref().unwrap_or(&account.id)
         ))
         .unwrap();
+    info!(
+        "Account statements for {} was combined into {}",
+        account.id,
+        f.path().unwrap().display()
+    );
+
+    debug!("Removing combined files for {}", account.id);
+    cleanup(
+        filenames
+            .iter()
+            .zip(repeat(env::current_dir().unwrap()))
+            .map(|(name, mut dir)| {
+                dir.push(name);
+                dir
+            })
+            .collect::<Vec<_>>()
+            .as_slice(),
+    )?;
 
     Ok(f.path().unwrap())
+}
+
+fn cleanup(files: &[PathBuf]) -> Result<(), String> {
+    for file in files {
+        fs::remove_file(file).unwrap();
+    }
+
+    Ok(())
 }

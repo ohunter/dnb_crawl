@@ -21,7 +21,7 @@ use tokio::{
 
 mod components;
 mod config;
-mod merge;
+mod files;
 mod system;
 
 #[cfg(unix)]
@@ -185,7 +185,7 @@ fn add_geckodriver_to_path() -> Result<(), String> {
 async fn run_geckodriver(
     port: u16,
     mut proc_sync_rx: Receiver<Signal>,
-    mut _task_sync_rx: Receiver<Signal>,
+    mut task_sync_rx: Receiver<Signal>,
 ) -> Result<(), String> {
     debug!("Attempting to start geckodriver");
     let mut fut = Command::new(GECKODRIVER_EXEC)
@@ -210,9 +210,9 @@ async fn run_geckodriver(
     proc_sync_rx.recv().await.unwrap();
     debug!("Received process wide shutdown signal");
 
-    // debug!("Waiting for signal that the WebDriver has been shut down");
-    // task_sync_rx.recv().await.unwrap();
-    // debug!("Received WebDriver done signal");
+    debug!("Waiting for signal that the WebDriver has been shut down");
+    task_sync_rx.recv().await.unwrap();
+    debug!("Received WebDriver done signal");
 
     debug!("Shutdown signal received. Killing geckodriver");
     match fut.try_wait() {
@@ -308,11 +308,15 @@ async fn run_driver(
                 account_file_map
             );
 
-            // TODO: Fix this
-            let _combined_files = account_file_map
+            let combined_files = account_file_map
                 .iter()
-                .map(|(account, files)| merge::merge_documents(account, files).unwrap())
+                .map(|(account, files)| files::merge(account, files).unwrap())
                 .collect::<Vec<_>>();
+
+            info!(
+                "Successfully combined account statements into the following documents: {:#?}",
+                combined_files
+            );
 
             // Inform all the other tasks that the downloading has been finished
             #[allow(unused_must_use)]
@@ -330,8 +334,8 @@ async fn run_driver(
         task.abort();
     }
 
-    // driver.quit().await.unwrap();
-    // task_sync_tx.send(Signal {}).unwrap();
+    driver.quit().await.unwrap();
+    task_sync_tx.send(Signal {}).unwrap();
     Ok(())
 }
 
