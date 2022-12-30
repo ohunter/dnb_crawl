@@ -1,17 +1,17 @@
-use log::{debug, error, info, trace, warn};
 use filepath::FilePath;
-use lopdf::{Document, Object, Bookmark, ObjectId};
+use log::error;
+use lopdf::{Bookmark, Document, Object, ObjectId};
 
 use crate::config::Account;
 use std::{collections::BTreeMap, path::PathBuf};
 
 pub fn merge_documents(account: &Account, filenames: &[String]) -> Result<PathBuf, String> {
-    let mut documents = filenames
+    let documents = filenames
         .iter()
         .map(|s| Document::load(s).unwrap())
         .collect::<Vec<_>>();
 
-     // Define a starting max_id (will be used as start index for object_ids)
+    // Define a starting max_id (will be used as start index for object_ids)
     let mut max_id = 1;
     let mut pagenum = 1;
     // Collect all Documents Objects grouped by a map
@@ -26,23 +26,24 @@ pub fn merge_documents(account: &Account, filenames: &[String]) -> Result<PathBu
         max_id = doc.max_id + 1;
 
         documents_pages.extend(
-            doc
-                    .get_pages()
-                    .into_iter()
-                    .map(|(_, object_id)| {
-                        if !first {
-                            let bookmark = Bookmark::new(String::from(format!("Page_{}", pagenum)), [0.0, 0.0, 1.0], 0, object_id);
-                            document.add_bookmark(bookmark, None);
-                            first = true;
-                            pagenum += 1;
-                        }
-
-                        (
+            doc.get_pages()
+                .into_values()
+                .map(|object_id| {
+                    if !first {
+                        let bookmark = Bookmark::new(
+                            format!("Page_{}", pagenum),
+                            [0.0, 0.0, 1.0],
+                            0,
                             object_id,
-                            doc.get_object(object_id).unwrap().to_owned(),
-                        )
-                    })
-                    .collect::<BTreeMap<ObjectId, Object>>(),
+                        );
+                        document.add_bookmark(bookmark, None);
+                        first = true;
+                        pagenum += 1;
+                    }
+
+                    (object_id, doc.get_object(object_id).unwrap().to_owned())
+                })
+                .collect::<BTreeMap<ObjectId, Object>>(),
         );
         documents_objects.extend(doc.objects);
     }
@@ -111,8 +112,8 @@ pub fn merge_documents(account: &Account, filenames: &[String]) -> Result<PathBu
             dictionary.set("Parent", pages_object.as_ref().unwrap().0);
 
             document
-                    .objects
-                    .insert(*object_id, Object::Dictionary(dictionary));
+                .objects
+                .insert(*object_id, Object::Dictionary(dictionary));
         }
     }
 
@@ -137,14 +138,14 @@ pub fn merge_documents(account: &Account, filenames: &[String]) -> Result<PathBu
         dictionary.set(
             "Kids",
             documents_pages
-                    .into_iter()
-                    .map(|(object_id, _)| Object::Reference(object_id))
-                    .collect::<Vec<_>>(),
+                .into_keys()
+                .map(Object::Reference)
+                .collect::<Vec<_>>(),
         );
 
         document
-                .objects
-                .insert(pages_object.0, Object::Dictionary(dictionary));
+            .objects
+            .insert(pages_object.0, Object::Dictionary(dictionary));
     }
 
     // Build a new "Catalog" with updated fields
@@ -154,8 +155,8 @@ pub fn merge_documents(account: &Account, filenames: &[String]) -> Result<PathBu
         dictionary.remove(b"Outlines"); // Outlines not supported in merged PDFs
 
         document
-                .objects
-                .insert(catalog_object.0, Object::Dictionary(dictionary));
+            .objects
+            .insert(catalog_object.0, Object::Dictionary(dictionary));
     }
 
     document.trailer.set("Root", catalog_object.0);
@@ -166,15 +167,13 @@ pub fn merge_documents(account: &Account, filenames: &[String]) -> Result<PathBu
     // Reorder all new Document objects
     document.renumber_objects();
 
-     //Set any Bookmarks to the First child if they are not set to a page
+    //Set any Bookmarks to the First child if they are not set to a page
     document.adjust_zero_pages();
 
     //Set all bookmarks to the PDF Object tree then set the Outlines to the Bookmark content map.
     if let Some(n) = document.build_outline() {
-        if let Ok(x) = document.get_object_mut(catalog_object.0) {
-            if let Object::Dictionary(ref mut dict) = x {
-                dict.set("Outlines", Object::Reference(n));
-            }
+        if let Ok(Object::Dictionary(ref mut dict)) = document.get_object_mut(catalog_object.0) {
+            dict.set("Outlines", Object::Reference(n));
         }
     }
 
@@ -189,36 +188,3 @@ pub fn merge_documents(account: &Account, filenames: &[String]) -> Result<PathBu
 
     Ok(f.path().unwrap())
 }
-
-// fn get_page_root(objects: &BTreeMap<(u32, u16), Object>) -> Option<(&(u32, u16), Object)> {
-//     objects
-//         .iter()
-//         .filter(|(_, obj)| obj.type_name().unwrap_or_default() == "Pages" && obj.as_dict().is_ok())
-//         .fold(None, |acc, (elem_id, elem_obj)| {
-//             return match acc {
-//                 None => Some((
-//                     elem_id,
-//                     Object::Dictionary(elem_obj.as_dict().unwrap().clone()),
-//                 )),
-//                 Some((root_id, root_obj)) => {
-//                     let mut new_dict = root_obj.as_dict().unwrap().clone();
-//                     new_dict.extend(elem_obj.as_dict().unwrap());
-
-//                     Some((root_id, Object::Dictionary(new_dict)))
-//                 }
-//             };
-//         })
-// }
-
-// fn transfer_pages(dest: &mut Document, srcs: &[Document]) {
-
-// }
-
-// fn transfer_catalog(dest: &mut Document, srcs: &[Document]) {
-
-// }
-
-// fn transfer_other(dest: &mut Document, srcs: &[Document]) {
-
-// }
-
