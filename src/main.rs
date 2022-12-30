@@ -671,16 +671,24 @@ async fn download_account_statements(
                 result_elem.click().await?;
 
                 debug!("Reading document generation date");
-                let generation_date = NaiveDate::parse_from_str(
-                    &driver
-                        .query(By::XPath("//div[@id='resultView']//table//tbody/tr/td[1]"))
-                        .first()
-                        .await?
-                        .text()
-                        .await?,
-                    "%d.%m.Y",
-                )
-                .unwrap();
+                // `NaiveDate::parse_from_str` fails for some reason, so manual parsing is required
+                let date_str = driver
+                    .query(By::XPath("//div[@id='resultView']//table//tbody/tr/td[1]"))
+                    .first()
+                    .await?
+                    .text()
+                    .await?;
+
+                let mut iter = date_str.split('.').take(3).map(str::parse::<u32>);
+                let day = iter.next().unwrap().unwrap();
+                let month = iter.next().unwrap().unwrap();
+                let year = iter.next().unwrap().unwrap();
+
+                debug!(
+                    "Parsed the generation date string to be {}/{}/{}",
+                    year, month, day
+                );
+                let generation_date = NaiveDate::from_ymd_opt(year as i32, month, day).unwrap();
 
                 filenames_to_wait_for.push(format!(
                     "{}_-_{}_-_Kontoutskrift.pdf",
@@ -708,32 +716,36 @@ async fn wait_for_downloads(driver: &WebDriver, filenames: &[String]) -> WebDriv
     driver.goto("about:downloads").await?;
     let mut filtered_downloads: Vec<components::DownloadListItemComponent> = Vec::new();
 
-    let all_downloads = driver.query(By::Tag("richlistitem")).all().await?;
-    let filter_futures = all_downloads
+    let all_downloads = driver
+        .query(By::Tag("richlistitem"))
+        .all()
+        .await?
         .iter()
-        .map(|elem| (elem, download_belongs_to_file_list(elem, filenames)))
+        .map(|e| components::DownloadListItemComponent::from(e.clone()))
         .collect::<Vec<_>>();
 
-    for (elem, fut) in filter_futures {
-        if fut.await {
-            filtered_downloads.push(components::DownloadListItemComponent::from(elem));
+    for elem in all_downloads {
+        if download_belongs_to_file_list(&elem, filenames).await {
+            filtered_downloads.push(elem);
+        }
+    }
+
+    while !filtered_downloads
+        .iter()
+        .all(components::DownloadListItemComponent::is_done)
+    {
+        for e in filtered_downloads.iter_mut() {
+            e.update_state().await?;
         }
     }
 
     Ok(())
 }
 
-async fn download_belongs_to_file_list(elem: &WebElement, file_list: &[String]) -> bool {
-    let filename = elem
-        .query(By::Tag("description"))
-        .with_class("downloadTarget")
-        .first()
-        .await
-        .unwrap()
-        .value()
-        .await
-        .unwrap()
-        .unwrap();
-
-    file_list.iter().any(|s| *s == *filename)
+async fn download_belongs_to_file_list(
+    elem: &components::DownloadListItemComponent,
+    file_list: &[String],
+) -> bool {
+    let filename = elem.filename().await.unwrap();
+    file_list.iter().any(|s| *s == filename)
 }

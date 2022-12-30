@@ -12,6 +12,7 @@ colored = "2.0.0"
 fern = {version = "0.6.1", features = ["chrono", "colored"]}
 inquire = "0.5.2"
 log = "0.4.17"
+lopdf = "0.29.0"
 num = "0.4.0"
 num-traits = "0.2.15"
 serde = "1.0.152"
