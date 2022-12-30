@@ -4,8 +4,9 @@ use config::{Account, Config};
 use inquire::validator::Validation;
 use inquire::{Password, PasswordDisplayMode, Text};
 use log::{debug, error, info, trace, warn};
+use lopdf::{Document, ObjectId};
 use num_traits::FromPrimitive;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::iter::repeat;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -34,12 +35,6 @@ const GECKODRIVER_EXEC: &str = "geckodriver.exe";
 
 #[cfg(windows)]
 const PATH_VAR_SEPARATOR: char = ';';
-
-#[derive(Debug)]
-enum AccountStatementStatus {
-    Downloaded,
-    NotFound,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 struct Signal {}
@@ -307,7 +302,11 @@ async fn run_driver(
                 .await
                 .expect("Unable to navigate to account statements");
 
-            download_statements(&local_driver, &config).await.unwrap();
+            let account_file_map = download_statements(&local_driver, &config).await.unwrap();
+            debug!(
+                "Successfully retrieved the following files: {:#?}",
+                account_file_map
+            );
 
             // Inform all the other tasks that the downloading has been finished
             #[allow(unused_must_use)]
@@ -531,23 +530,25 @@ async fn navigate_to_account_statements(driver: &WebDriver) -> WebDriverResult<(
     Ok(())
 }
 
-async fn download_statements<'a>(
+async fn download_statements(
     driver: &WebDriver,
-    config: &'a Config,
-) -> WebDriverResult<HashMap<&'a String, Vec<AccountStatementStatus>>> {
-    let mut tmp_results: Vec<(&String, Vec<AccountStatementStatus>)> = Vec::new();
+    config: &Config,
+) -> WebDriverResult<HashMap<Account, Vec<String>>> {
+    let mut filepairs: Vec<(Account, Vec<String>)> = Vec::new();
     for (account, (from, to)) in config
         .extractions
         .iter()
         .flat_map(|e| e.accounts.iter().zip(repeat((e.from, e.to))))
     {
-        let download_results = download_account_statements(driver, account, from, to)
+        let mut files = download_account_statements(driver, account, from, to)
             .await
             .unwrap();
-        tmp_results.push((&account.id, download_results));
+        files.sort();
+
+        filepairs.push((account.clone(), files))
     }
 
-    Ok(HashMap::from_iter(tmp_results.into_iter()))
+    Ok(HashMap::from_iter(filepairs.into_iter()))
 }
 
 fn month_number(date: NaiveDate) -> u32 {
@@ -561,10 +562,9 @@ async fn download_account_statements(
     account: &Account,
     start: NaiveDate,
     stop: NaiveDate,
-) -> WebDriverResult<Vec<AccountStatementStatus>> {
+) -> WebDriverResult<Vec<String>> {
     let month_indices = (month_number(stop)..month_number(start) + 1).rev();
     let mut filenames_to_wait_for: Vec<String> = Vec::new();
-    let mut downloads: Vec<AccountStatementStatus> = Vec::with_capacity(month_indices.len());
 
     debug!("Attempting to download statements for {}", account.id);
     debug!("Waiting for account selector to be displayed");
@@ -632,13 +632,13 @@ async fn download_account_statements(
         month_indices.len(),
         account.id
     );
-    for (downloads_index, month_index) in month_indices.enumerate() {
+    for index in month_indices {
         debug!(
             "Attempting to download {} statements for {}",
             current_month.name(),
             account.id
         );
-        month_menu.select_by_value(&month_index.to_string()).await?;
+        month_menu.select_by_value(&index.to_string()).await?;
 
         debug!("Fetching statements for {}", current_month.name());
         retrieve_button.click().await?;
@@ -659,8 +659,6 @@ async fn download_account_statements(
                     account.id,
                     current_month.name()
                 );
-
-                downloads.insert(downloads_index, AccountStatementStatus::NotFound);
             }
             "a" => {
                 info!(
@@ -703,13 +701,14 @@ async fn download_account_statements(
         current_month = current_month.succ();
     }
 
+    debug!("Waiting for {} downloads to finish downloading", account.id);
     driver
         .in_new_tab({
             || async { wait_for_downloads(driver, filenames_to_wait_for.as_slice()).await }
         })
         .await?;
 
-    Ok(downloads)
+    Ok(filenames_to_wait_for)
 }
 
 async fn wait_for_downloads(driver: &WebDriver, filenames: &[String]) -> WebDriverResult<()> {
@@ -734,6 +733,10 @@ async fn wait_for_downloads(driver: &WebDriver, filenames: &[String]) -> WebDriv
         .iter()
         .all(components::DownloadListItemComponent::is_done)
     {
+        debug!(
+            "Waiting for {} downloads to finish",
+            filtered_downloads.iter().filter(|e| e.is_done()).count()
+        );
         for e in filtered_downloads.iter_mut() {
             e.update_state().await?;
         }
@@ -748,4 +751,20 @@ async fn download_belongs_to_file_list(
 ) -> bool {
     let filename = elem.filename().await.unwrap();
     file_list.iter().any(|s| *s == filename)
+}
+
+async fn combine_files(account: &Account, filenames: &[String]) {
+    let downloaded_docs = filenames
+        .iter()
+        .map(|s| Document::load(&s).unwrap())
+        .collect::<Vec<_>>();
+
+    let mut combined_doc = Document::new();
+    let documents_pages = BTreeMap::from_iter(downloaded_docs.iter().flat_map(|doc| {
+        doc.get_pages()
+            .iter()
+            .map(|(_, object_id)| (*object_id, doc.get_object(*object_id).unwrap().clone())).collect::<Vec<_>>()
+    }));
+
+    // let tmp =;
 }

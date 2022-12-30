@@ -21,7 +21,7 @@ pub struct Extraction {
     pub accounts: Vec<Account>,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Hash)]
 pub struct Account {
     pub id: String,
     pub name: Option<String>,
