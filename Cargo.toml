@@ -10,6 +10,7 @@ chrono = { version = "0.4.23", features = ["serde", "std"] }
 clap = { version = "4.0.32", features = ["derive"] }
 colored = "2.0.0"
 fern = {version = "0.6.1", features = ["chrono", "colored"]}
+filepath = "0.1.2"
 inquire = "0.5.2"
 log = "0.4.17"
 lopdf = "0.29.0"

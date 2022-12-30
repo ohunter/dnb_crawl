@@ -4,9 +4,8 @@ use config::{Account, Config};
 use inquire::validator::Validation;
 use inquire::{Password, PasswordDisplayMode, Text};
 use log::{debug, error, info, trace, warn};
-use lopdf::{Document, ObjectId};
 use num_traits::FromPrimitive;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::iter::repeat;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -22,6 +21,7 @@ use tokio::{
 
 mod components;
 mod config;
+mod merge;
 mod system;
 
 #[cfg(unix)]
@@ -123,7 +123,7 @@ fn setup_logger() -> Result<(), fern::InitError> {
                 message
             ))
         })
-        .level(log::LevelFilter::Debug)
+        .level(log::LevelFilter::Info)
         .chain(std::io::stderr())
         .chain(fern::log_file("output.log")?)
         .apply()?;
@@ -307,6 +307,12 @@ async fn run_driver(
                 "Successfully retrieved the following files: {:#?}",
                 account_file_map
             );
+
+            // TODO: Fix this
+            let _combined_files = account_file_map
+                .iter()
+                .map(|(account, files)| merge::merge_documents(account, files).unwrap())
+                .collect::<Vec<_>>();
 
             // Inform all the other tasks that the downloading has been finished
             #[allow(unused_must_use)]
@@ -563,7 +569,7 @@ async fn download_account_statements(
     start: NaiveDate,
     stop: NaiveDate,
 ) -> WebDriverResult<Vec<String>> {
-    let month_indices = (month_number(stop)..month_number(start) + 1).rev();
+    let month_indices = (month_number(stop) + 1..month_number(start) + 1).rev();
     let mut filenames_to_wait_for: Vec<String> = Vec::new();
 
     debug!("Attempting to download statements for {}", account.id);
@@ -751,20 +757,4 @@ async fn download_belongs_to_file_list(
 ) -> bool {
     let filename = elem.filename().await.unwrap();
     file_list.iter().any(|s| *s == filename)
-}
-
-async fn combine_files(account: &Account, filenames: &[String]) {
-    let downloaded_docs = filenames
-        .iter()
-        .map(|s| Document::load(&s).unwrap())
-        .collect::<Vec<_>>();
-
-    let mut combined_doc = Document::new();
-    let documents_pages = BTreeMap::from_iter(downloaded_docs.iter().flat_map(|doc| {
-        doc.get_pages()
-            .iter()
-            .map(|(_, object_id)| (*object_id, doc.get_object(*object_id).unwrap().clone())).collect::<Vec<_>>()
-    }));
-
-    // let tmp =;
 }

@@ -312,6 +312,7 @@ dependencies = [
  "clap",
  "colored 2.0.0",
  "fern",
+ "filepath",
  "inquire",
  "log",
  "lopdf",
@@ -447,6 +448,16 @@ dependencies = [
  "chrono",
  "colored 1.9.3",
  "log",
+]
+
+[[package]]
+name = "filepath"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7faa16fcec147281a1719947edb44af4f9124964bf7476bd5f5356a48e44dcc"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
