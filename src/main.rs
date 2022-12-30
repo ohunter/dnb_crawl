@@ -343,19 +343,12 @@ async fn initial(driver: &WebDriver) -> WebDriverResult<()> {
     driver.goto("https://dnb.no").await?;
 
     debug!("Awaiting the consent modal");
-    let consent_modal = driver.query(By::Id("consent-modal")).first().await?;
-    consent_modal.wait_until().displayed().await?;
+    let consent_modal = components::ConsentModalComponent::from(
+        driver.query(By::Id("consent-modal")).first().await?,
+    );
     debug!("Consent modal located");
 
-    debug!("Attempting to locate close button for modal");
-    let modal_close = consent_modal
-        .query(By::Tag("button"))
-        .with_class("consent-close")
-        .first()
-        .await?;
-    modal_close.wait_until().clickable().await?;
-    debug!("Close button for modal is now clickable");
-    modal_close.click().await?;
+    consent_modal.close().await?;
 
     Ok(())
 }
@@ -376,60 +369,26 @@ async fn first_login_stage(driver: &WebDriver, config: &Config) -> WebDriverResu
     debug!("Login modal is now displayed");
 
     debug!("Attempting to fill in login form");
-    let login_form = login_modal.query(By::Tag("form")).first().await?;
-
-    debug!("Entering SSN into form");
-    let login_input = login_form
-        .query(By::Tag("input"))
-        .with_attribute("name", "uid")
-        .first()
-        .await?;
+    let login_form =
+        components::LoginFormComponent::from(login_modal.query(By::Tag("form")).first().await?);
 
     let ssn = match config.ssn.clone() {
         Some(s) => s,
         None => Text::new("SSN (11 digits):").prompt().unwrap(),
     };
-    login_input.send_keys(&ssn).await?;
 
-    debug!("Submitting first stage login");
-    let login_button = login_form
-        .query(By::Tag("button"))
-        .with_attribute("type", "submit")
-        .first()
-        .await?;
-    login_button.wait_until().clickable().await?;
-    login_button.click().await?;
-    debug!("First stage login form submitted");
+    debug!("Entering SSN into form");
+    login_form.fill_in_and_submit(ssn).await?;
 
     Ok(())
 }
 
 async fn second_login_stage(driver: &WebDriver) -> WebDriverResult<()> {
-    debug!("Changing login method from BankID to PIN and OTP");
-    let parent_container = driver
-        .query(By::Tag("div"))
-        .with_id("r_state-2")
-        .first()
-        .await?;
-    let login_type = parent_container
-        .query(By::Tag("div"))
-        .with_attribute("role", "button")
-        .first()
-        .await?;
-    login_type.wait_until().clickable().await?;
-    login_type.click().await?;
-    debug!("Switched to PIN and OTP");
+    let authentication = components::AuthenticationFormComponent::from(
+        driver.query(By::Id("r-state-main")).first().await?,
+    );
 
-    debug!("Locating login form elements");
-    let login_form = parent_container.query(By::Tag("form")).first().await?;
-
-    let pin_input = login_form.query(By::Id("phoneCode")).first().await?;
-    let otp_input = login_form.query(By::Id("otpCode")).first().await?;
-    let login_button = login_form
-        .query(By::Tag("button"))
-        .with_attribute("type", "submit")
-        .first()
-        .await?;
+    authentication.select_pin_and_otp().await?;
 
     debug!("Asking user for PIN and OTP");
     let pin = Password::new("PIN (4 digits):")
@@ -477,12 +436,8 @@ async fn second_login_stage(driver: &WebDriver) -> WebDriverResult<()> {
         .unwrap();
     debug!("User PIN and OTP validated successfully");
 
-    pin_input.send_keys(&pin).await?;
-    otp_input.send_keys(&otp).await?;
-
     debug!("Submitting user login");
-    login_button.wait_until().clickable().await?;
-    login_button.click().await?;
+    authentication.fill_in_and_submit(pin, otp).await?;
 
     Ok(())
 }
