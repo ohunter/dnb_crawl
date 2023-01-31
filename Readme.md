@@ -25,13 +25,13 @@ The application uses a yaml file to determine which accounts are to be processed
 The format goes as follows:
 
 ```yaml
-ssn: ###########      # The user identification number
-extraction:           # Contains all the different accounts to be extracted
-  - start: "01/2020"   # The first month
-    stop: "01/2021"     # The month after the last one needed
-    accounts:         # All the accounts which should be handled within this duration
-    - id: "####.##.#####"
-      name: "..."
+ssn: 00000000000              # The user identification number
+extractions:                  # Contains all the different accounts to be extracted
+  - start: "01/2020"          # The first month
+    stop: "01/2021"           # The month after the last one needed
+    accounts:                 # All the accounts which should be handled within this duration
+    - id: "####.##.#####"     # This is the account number that will be looked for on DNB's pages
+      name: "example account" # This will be the name of the file pertaining to this account
 ```
 
 The `ssn` field corresponds to the number you enter when you first want to log on to DNB.

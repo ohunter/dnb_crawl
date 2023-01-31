@@ -64,15 +64,31 @@ def resolve_env():
     
     basepath = f"{os.path.dirname(os.path.abspath(getsourcefile(lambda:0)))}/drivers"
 
-    if any([sys.platform.startswith(x) for x in ['freebsd', 'linux', 'aix']]):
-        # Linux
-        os.environ['PATH'] += f":{basepath}/linux/"
-    elif sys.platform.startswith('darwin'):
-        # Unix
-        os.environ['PATH'] += f":{basepath}/macos/"
-    elif sys.platform.startswith('win'):
-        # Windows
-        os.environ['PATH'] += f";{basepath}/windows/"
+    match sys.platform[:3]:
+        case 'fre' | 'lin' | 'aix':
+            # Linux
+            os.environ['PATH'] += f":{basepath}/linux/"
+        case 'dar':
+            # Unix
+            os.environ['PATH'] += f":{basepath}/macos/"
+        case 'win':
+            # Windows
+            os.environ['PATH'] += f";{basepath}/windows/"
+
+def find_firefox_exec():
+    match sys.platform[:3]:
+        case 'fre' | 'lin' | 'aix':
+            # Firefox should exist in $PATH
+            pass
+        case 'dar':
+            # Firefox should exist in $PATH
+            pass
+        case 'win':
+            import winreg
+            firefox_version = winreg.QueryValue(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Mozilla\\Mozilla Firefox")
+            access_registry = winreg.ConnectRegistry(None,winreg.HKEY_LOCAL_MACHINE)
+            key = winreg.OpenKey(access_registry,f"SOFTWARE\\Mozilla\\Mozilla Firefox {firefox_version}\\bin")
+            return winreg.QueryValueEx(key, "PathToExe")[0]
 
 def configure():
     """ Configures the driver with the correct options """
@@ -80,6 +96,7 @@ def configure():
 
     opt = webdriver.firefox.options.Options()
     opt.headless = True
+    opt.binary = find_firefox_exec()
     prof = webdriver.FirefoxProfile()
 
     prof.set_preference('browser.download.folderList', 2)
