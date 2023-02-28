@@ -95,7 +95,7 @@ def configure():
     conf = {}
 
     opt = webdriver.firefox.options.Options()
-    opt.headless = True
+    opt.headless = False
     opt.binary = find_firefox_exec()
     prof = webdriver.FirefoxProfile()
 
@@ -131,7 +131,7 @@ def login(driver, ssn: Optional[int]):
     except TimeoutException:
         pass
 
-    start_login_btn = driver.find_element_by_xpath("/html/body/div/div[1]/div[1]/section/header/div[2]/div/div/div[3]/div[2]/div/button")
+    start_login_btn = driver.find_element_by_xpath("/html/body/div/div[1]/div[1]/div[1]/section/header/div/div/div/div[3]/div[2]/div/button")
 
     while not driver.find_elements(By.XPATH, '//form'):
         start_login_btn.click()
