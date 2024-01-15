@@ -11,7 +11,7 @@ from typing import Optional
 from dacite import from_dict, Config as DaConfig
 
 import yaml
-from PyPDF2 import PdfFileMerger
+from pypdf import PdfMerger
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.common.by import By
@@ -61,8 +61,10 @@ def num_months(m1: date, m2: date):
 
 def resolve_env():
     """ Adds the web drivers necessary for Selenium to work at runtime """
-    
-    basepath = f"{os.path.dirname(os.path.abspath(getsourcefile(lambda:0)))}/drivers"
+
+    # Pyinstaller is unable to resolve the current script path so assume the drivers are located with the executable
+    # basepath = f"{os.path.dirname(os.path.abspath(getsourcefile(lambda:0)))}/drivers"
+    basepath = f"{os.getcwd()}/drivers"
 
     match sys.platform[:3]:
         case 'fre' | 'lin' | 'aix':
@@ -90,31 +92,6 @@ def find_firefox_exec():
             key = winreg.OpenKey(access_registry,f"SOFTWARE\\Mozilla\\Mozilla Firefox {firefox_version}\\bin")
             return winreg.QueryValueEx(key, "PathToExe")[0]
 
-def configure():
-    """ Configures the driver with the correct options """
-    conf = {}
-
-    opt = webdriver.firefox.options.Options()
-    opt.headless = False
-    opt.binary = find_firefox_exec()
-    prof = webdriver.FirefoxProfile()
-
-    prof.set_preference('browser.download.folderList', 2)
-    prof.set_preference('browser.download.manager.showWhenStarting', False)
-    prof.set_preference('browser.download.dir', os.getcwd())
-    prof.set_preference('browser.helperApps.neverAsk.saveToDisk', 'application/pdf')
-    prof.set_preference('pdfjs.disabled', True)
-    prof.set_preference('plugin.scan.plid.all', False)
-    prof.set_preference('plugin.scan.Acrobat', "99.0")
-    prof.set_preference('general.warnOnAboutConfig', False)
-    prof.update_preferences()
-
-    conf['firefox_profile'] = prof
-
-    conf['options'] = opt
-
-    return conf
-
 def login(driver, ssn: Optional[int]):
     """ Navigates the user to DNB and logs them in using a PIN and OTP combo and waits for the content to load """
 
@@ -126,12 +103,12 @@ def login(driver, ssn: Optional[int]):
         WebDriverWait(driver, Timeout).until(EC.element_to_be_clickable((By.ID, 'consent-modal')))
 
         # Remove the modal block that may appear
-        if driver.find_element_by_id('consent-modal').is_displayed():
-            driver.find_element_by_id('consent-x').click()
+        if driver.find_element(by='id', value='consent-modal').is_displayed():
+            driver.find_element(by='id', value='consent-x').click()
     except TimeoutException:
         pass
 
-    start_login_btn = driver.find_element_by_xpath("/html/body/div/div[1]/div[1]/div[1]/section/header/div/div/div/div[3]/div[2]/div/button")
+    start_login_btn = driver.find_element(by='xpath', value="/html/body/div/div[1]/div[1]/div/div[1]/section/header/div/div/div/div[3]/div[2]/div/button")
 
     while not driver.find_elements(By.XPATH, '//form'):
         start_login_btn.click()
@@ -139,9 +116,9 @@ def login(driver, ssn: Optional[int]):
     # DNB has two stages of login
     # The first one is simply entering a user's SSN
     # Then the user has to select the login type
-    form_1 = driver.find_element_by_xpath("//form")
-    inp = form_1.find_element_by_xpath(".//input[@name='uid']")
-    cnf = form_1.find_element_by_xpath(".//button[last()]")
+    form_1 = driver.find_element(by='xpath', value="//form")
+    inp = form_1.find_element(by='xpath', value=".//input[@name='uid']")
+    cnf = form_1.find_element(by='xpath', value=".//button[last()]")
 
     if not ssn:
         ssn = int(input("Please enter your SSN for DNB (11 digits): "))
@@ -150,17 +127,27 @@ def login(driver, ssn: Optional[int]):
     cnf.click()
 
     # Wait for the necessary DOM elements to be loaded
-    WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.ID, "r_state-2")))
+    WebDriverWait(driver, Timeout).until(
+        EC.all_of(
+            EC.presence_of_element_located((By.ID, "r_state-2")),
+            EC.none_of(
+                EC.presence_of_element_located((By.XPATH, "//div[@class='logon-wrap overlay']"))
+            ),
+            EC.element_to_be_clickable((By.XPATH, "//div[@id='r_state-2']/div[1]"))
+        )
+    )
 
     # Select the easier method of logging in and logging in
-    nd_login = driver.find_element_by_xpath("//div[@id='r_state-2']")
-    nd_login.find_element_by_xpath("./div[1]").click()
+    nd_login = driver.find_element(by='xpath', value="//div[@id='r_state-2']")
+
+    driver.find_element(by='xpath', value="//div[@id='r_state-2']/div[1]").click()
+    # breakpoint()
 
     # Locate all the neccesary fields to log in with a PIN and OTP combo
-    form_2 = nd_login.find_element_by_xpath("./div[2]//form")
-    pin = form_2.find_element_by_xpath(".//input[@id='phoneCode']")
-    otp = form_2.find_element_by_xpath(".//input[@id='otpCode']")
-    btn = form_2.find_element_by_xpath(".//button")
+    form_2 = nd_login.find_element(by='xpath', value="./div[2]//form")
+    pin = form_2.find_element(by='xpath', value=".//input[@id='phoneCode']")
+    otp = form_2.find_element(by='xpath', value=".//input[@id='otpCode']")
+    btn = form_2.find_element(by='xpath', value=".//button")
 
     # Clear the fields and ask for user input
     pin.clear()
@@ -176,7 +163,7 @@ def login(driver, ssn: Optional[int]):
         WebDriverWait(driver, Timeout).until(EC.element_to_be_clickable((By.XPATH, "/html/body/div/div[1]/div/a")))
 
         # Force a navigation to the user's homepage
-        logo_link = driver.find_element_by_xpath("//div[@id='logo']/a")
+        logo_link = driver.find_element(by='xpath', value="//div[@id='logo']/a")
         logo_link.click()
     except TimeoutException:
         # Typically happens when the user isnt prompted with an intermidiate page
@@ -190,19 +177,19 @@ def navigate(driver):
 
     print("Navigating")
 
-    top_menu = driver.find_element_by_xpath("//div[@id='menuLoggedIn']")
-    m1 = top_menu.find_element_by_xpath(".//li[1]")
+    top_menu = driver.find_element(by='xpath', value="//div[@id='menuLoggedIn']")
+    m1 = top_menu.find_element(by='xpath', value=".//li[1]")
 
     # Activate the dropdown. May be optional
-    m1.find_element_by_xpath("./a").click()
+    m1.find_element(by='xpath', value="./a").click()
 
     # Locate the correct link
-    m1.find_element_by_xpath(".//a[@id='gllwg07s']").click()
+    m1.find_element(by='xpath', value=".//a[@id='gllwg07s']").click()
 
     WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.ID, "documentType-button")))
 
     driver.execute_script('document.getElementById("documentType").style = "display: block;"')
-    sel = Select(driver.find_element_by_xpath("//select[@id='documentType'] | //select[@name='documentType']"))
+    sel = Select(driver.find_element(by='xpath', value="//select[@id='documentType'] | //select[@name='documentType']"))
     sel.select_by_value('kontoutskrift')
 
 def extract(driver, config: Config):
@@ -223,7 +210,7 @@ def extract(driver, config: Config):
 
             # Select the correct account
             driver.execute_script('document.getElementById("accountNumber").style = "display: block;"')
-            sel = Select(driver.find_element_by_xpath("//select[@id='accountNumber'] | //select[@name='accountNumber']"))
+            sel = Select(driver.find_element(by='xpath', value="//select[@id='accountNumber'] | //select[@name='accountNumber']"))
             sel.select_by_value(account.id.replace('.', ''))
 
             # Iterate over the given months
@@ -233,23 +220,23 @@ def extract(driver, config: Config):
                     try:
                         WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.ID, "searchIntervalIndex")))
                         driver.execute_script('document.getElementById("searchIntervalIndex").style = "display: block;"')
-                        sel = Select(driver.find_element_by_xpath("//select[@id='searchIntervalIndex'] | //select[@name='searchIntervalIndex']"))
+                        sel = Select(driver.find_element(by='xpath', value="//select[@id='searchIntervalIndex'] | //select[@name='searchIntervalIndex']"))
                         sel.select_by_value(f"{month}")
 
                         WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.XPATH, "//input[@id='archiveSearchSubmit']")))
-                        driver.find_element_by_xpath("//input[@id='archiveSearchSubmit']").click()
+                        driver.find_element(by='xpath', value="//input[@id='archiveSearchSubmit']").click()
                         
                         try:
                             # Wait to ensure that the correct DOM elements are loaded
                             WebDriverWait(driver, Timeout).until(EC.presence_of_element_located((By.XPATH, "//table//a[@href='ajax/attachment/0/kontoutskrift'] | //div[@id='userInformationView']")))
                             # Click the file to download
-                            driver.find_element_by_xpath("//table//a[@href='ajax/attachment/0/kontoutskrift']").click()
+                            driver.find_element(by='xpath', value="//table//a[@href='ajax/attachment/0/kontoutskrift']").click()
                         except NoSuchElementException:
                             # Inform the user if it's not possible to download
-                            print(f"Could not find financial statement for {account} in {driver.find_element_by_id('searchIntervalIndex-button').text}")
+                            print(f"Could not find financial statement for {account} in {driver.find_element(by='id', value='searchIntervalIndex-button').text}")
                             months.remove(month)
                     except TimeoutException:
-                        print(f"Timed out for {account} on {driver.find_element_by_id('searchIntervalIndex-button').text}")
+                        print(f"Timed out for {account} on {driver.find_element(by='id', value='searchIntervalIndex-button').text}")
                         pass
 
                 for file in pathlib.Path(os.getcwd()).glob('*.pdf'):
@@ -277,7 +264,7 @@ def combine(account: Account):
     dl_path = pathlib.Path(os.getcwd())
     files = [x for x in dl_path.glob('*.pdf') if file_pattern.fullmatch(x.stem)]
 
-    merger = PdfFileMerger()
+    merger = PdfMerger()
 
     for file in sorted(files):
         merger.append(str(file))
@@ -298,6 +285,27 @@ def cleanup():
 
         if match:
             file.unlink()
+
+def configure():
+    """ Configures the driver with the correct options """
+    opts = webdriver.firefox.options.Options()
+    opts.headless = False
+    opts.binary = find_firefox_exec()
+    prof = webdriver.FirefoxProfile()
+
+    prof.set_preference('browser.download.folderList', 2)
+    prof.set_preference('browser.download.manager.showWhenStarting', False)
+    prof.set_preference('browser.download.dir', os.getcwd())
+    prof.set_preference('browser.helperApps.neverAsk.saveToDisk', 'application/pdf')
+    prof.set_preference('pdfjs.disabled', True)
+    prof.set_preference('plugin.scan.plid.all', False)
+    prof.set_preference('plugin.scan.Acrobat', "99.0")
+    prof.set_preference('general.warnOnAboutConfig', False)
+    prof.update_preferences()
+
+    opts.profile = prof
+
+    return opts
 
 def main(argv):
     if len(argv) < 2:
@@ -331,7 +339,7 @@ def main(argv):
     resolve_env()
 
     # Instantiate the web browser and navigate to DNB
-    driver = webdriver.Firefox(**configure())
+    driver = webdriver.Firefox(configure())
 
     try:
         login(driver, config.ssn)

@@ -4,3 +4,6 @@
 /build
 /dist
 /testing
+/main.exe
+/main.spec
+/venv
