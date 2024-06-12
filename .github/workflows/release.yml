@@ -1,6 +1,6 @@
 # This workflow generates the release for all OSs
 
-on: []
+on: [pull_request]
 
 name: Generate Release
 
