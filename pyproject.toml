@@ -12,4 +12,8 @@ dependencies = [
     "pypdf>=5.2.0",
     "pyyaml>=6.0.2",
     "selenium>=4.28.1",
+    "xlrd>=2.0.1",
 ]
+
+[tool.uv]
+link-mode = "copy"

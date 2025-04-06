@@ -7,7 +7,7 @@ if __name__ == "__main__":
         print("Please provide excel file as second argument")
         sys.exit(0)
 
-    df = pd.read_excel(sys.argv[1])
+    df = pd.read_csv(sys.argv[1], sep=';')
     with open("config.yaml", "w") as fi:
         yaml.dump(
             {

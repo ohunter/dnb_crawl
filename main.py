@@ -122,8 +122,9 @@ def login(driver, ssn: Optional[int]):
         )
 
         # Remove the modal block that may appear
-        if driver.find_element(by="id", value=CONSENT_MODAL_ID).is_displayed():
-            driver.find_element(by="id", value="consent-x").click()
+        consent_modal = driver.find_element(by="id", value=CONSENT_MODAL_ID)
+        if consent_modal.is_displayed():
+            consent_modal.find_element(By.XPATH, ".//button[@aria-label='Ikke tillat, close popup']").click()
     except TimeoutException:
         pass
 
